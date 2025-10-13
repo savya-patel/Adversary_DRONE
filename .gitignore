@@ -4,4 +4,4 @@ __pycache__/
 *.pyo
 *.pyd
 yolo4/
-yolo4/
+.git_corrupt/
