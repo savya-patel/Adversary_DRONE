@@ -1,8 +1,10 @@
 """Run inference with a YOLOv5 model on images, videos, directories, streams
 
 Usage:
-    $ python path/to/detect.py --source path/to/img.jpg --weights yolov5s.pt --img 640
-    $ python detect_test.py --weights best.pt --source 0 --max-det 1 --imgsz 320
+    $ example: python path/to/detect.py --source path/to/img.jpg --weights yolov5s.pt --img 640
+    
+    cd Adversary_DRONE/Detect_Drone
+    $ python detect_test.py --weights best.pt --source 0 --max-det 1 --imgsz 320 --nosave
 """
 
 # Revision: added to bypass UnpicklingError: Weights only load failed
