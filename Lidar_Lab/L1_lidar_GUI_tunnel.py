@@ -152,7 +152,7 @@ class RemoteLidarGUI:
         self.fig = Figure(figsize=(8, 8), dpi=100)
         self.ax = self.fig.add_subplot(111, polar=True)
         self.ax.set_theta_zero_location('N')
-        self.ax.set_theta_direction(-1)
+        self.ax.set_theta_direction(1)  # Counterclockwise: left=-135°, right=+135°
         self.ax.set_thetalim(-np.pi * 3 / 4, np.pi * 3 / 4)
         self.ax.set_ylim(0, 10)  # 10m max range
         self.ax.set_title("Remote LiDAR 270° Scan (SSH Tunnel)", va='bottom', fontsize=14, fontweight='bold')
@@ -206,6 +206,7 @@ class RemoteLidarGUI:
         """Update polar plot with latest LiDAR scan"""
         if self.latest_scan is not None:
             distances = self.latest_scan
+            # Angles from -135° (left) to +135° (right)
             angles = np.linspace(-135, 135, len(distances)) * np.pi / 180
             
             # Calculate obstacle warnings
@@ -235,7 +236,7 @@ class RemoteLidarGUI:
             # Clear and redraw
             self.ax.clear()
             self.ax.set_theta_zero_location('N')
-            self.ax.set_theta_direction(-1)
+            self.ax.set_theta_direction(1)  # Counterclockwise: left=-135°, right=+135°
             self.ax.set_thetalim(-np.pi * 3 / 4, np.pi * 3 / 4)
             self.ax.set_ylim(0, 10)
             self.ax.scatter(angles, distances, s=10, c=colors, alpha=0.8)

@@ -1,0 +1,83 @@
+# SLAM Toolbox Configuration - Optimized for NVIDIA Jetson with TIM561 2D LiDAR
+# High-performance settings for real-time mapping
+
+slam_toolbox:
+  ros__parameters:
+
+    # ROS Parameters
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+    scan_topic: /scan
+    mode: mapping  # mapping, localization
+    
+    # Debugging
+    debug_logging: false
+    throttle_scans: 1
+    
+    # Transform parameters
+    transform_publish_period: 0.02  # 50 Hz for smooth TF publishing
+    tf_buffer_duration: 30.0
+    transform_timeout: 0.2
+    map_update_interval: 2.0  # Update map every 2 seconds
+    
+    # Solver parameters - Optimized for Jetson CPU
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+    
+    # Scan matcher parameters
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.005  # meters - Very low for handheld testing
+    minimum_travel_heading: 0.005   # radians - Very low for handheld testing  
+    minimum_time_interval: 0.5      # Force update every 0.5 seconds regardless of movement
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1  
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10          
+    loop_match_maximum_variance_coarse: 3.0  
+    loop_match_minimum_response_coarse: 0.35    
+    loop_match_minimum_response_fine: 0.45
+    
+    # Correlation parameters - Fine-tuned for TIM561 (270° FoV, 0.33° resolution)
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1 
+    
+    # Loop closure parameters
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+    
+    # Scan matcher search parameters
+    distance_variance_penalty: 0.5      
+    angle_variance_penalty: 1.0    
+    
+    fine_search_angle_offset: 0.00349     
+    coarse_search_angle_offset: 0.349    
+    coarse_angle_resolution: 0.0349        
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
+    
+    # Performance tuning for Jetson
+    # Laser range limits tuned for TiM561 (messages earlier showed 0.1m..10.0m)
+    min_laser_range: 0.1
+    max_laser_range: 10.0
+    
+    # Map quality parameters
+    resolution: 0.05  # 5cm resolution
+    
+    # Async mode for better performance
+    enable_interactive_mode: false
+    paused_new_measurements: false
+    
+    # Stack size for multi-threading
+    stack_size_to_use: 40000000  # 40MB

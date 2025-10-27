@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from detect_test_jetty import run as yolo_run  # your existing detect_test_jetty.py
 from detect_test_attitude_jetty import (
-    run_with_attitude_control,
+    #run_with_attitude_control,
     process_detection_with_control,
     send_attitude_target
 )

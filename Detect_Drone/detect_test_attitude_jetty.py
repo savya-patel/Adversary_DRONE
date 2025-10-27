@@ -117,21 +117,49 @@ def process_detection_with_control(im0, det, names, frame_w, frame_h, vehicle):
         desired_size = frame_h / 5
         err_z = bbox_h - desired_size
 
-        # Tunable gains
-        Kp_pitch = 0.001    # forward/backward
-        Kp_thrust = 0.0005  # up/down
-        Kp_yaw = 0.001      # yaw rate (horizontal centering)
-
-        # Convert image-space errors to attitude commands
-        pitch = -Kp_pitch * err_z           # forward/backward tilt
+        # Tunable gains (reduced for smoother response)
+        Kp_pitch = 0.0005   # forward/backward (halved)
+        Kp_thrust = 0.0003  # up/down (reduced)
+        Kp_yaw = 0.0005     # yaw rate (halved)
+        
+        # Deadband - ignore tiny errors to prevent jitter
+        deadband_x = 20  # pixels
+        deadband_y = 20  # pixels
+        deadband_z = 10  # pixels
+        
+        # Apply deadband to errors
+        err_x = 0 if abs(err_x) < deadband_x else err_x
+        err_y = 0 if abs(err_y) < deadband_y else err_y
+        err_z = 0 if abs(err_z) < deadband_z else err_z
+        
+        # Smoothing filter (exponential moving average)
+        alpha = 0.3  # smoothing factor (0-1), lower = smoother
+        if not hasattr(process_detection_with_control, 'last_pitch'):
+            process_detection_with_control.last_pitch = 0
+            process_detection_with_control.last_yaw = 0
+            process_detection_with_control.last_thrust = 0.3
+        
+        # Convert image-space errors to attitude commands with smoothing
+        target_pitch = -Kp_pitch * err_z           # forward/backward tilt
+        target_yaw = Kp_yaw * err_x                # turning left/right
+        target_thrust = 0.3 + (Kp_thrust * (-err_y))  # altitude correction
+        
+        # Apply exponential smoothing
+        pitch = alpha * target_pitch + (1 - alpha) * process_detection_with_control.last_pitch
+        yaw_rate = alpha * target_yaw + (1 - alpha) * process_detection_with_control.last_yaw
+        thrust = alpha * target_thrust + (1 - alpha) * process_detection_with_control.last_thrust
+        # Keep roll at zero
         roll = 0.0
-        yaw_rate = Kp_yaw * err_x           # turning left/right
-        thrust = 0.25 + (Kp_thrust * (-err_y))  # altitude correction
 
-        # Clip values to safe ranges
-        pitch = np.clip(pitch, -0.3, 0.3)
-        yaw_rate = np.clip(yaw_rate, -0.5, 0.5)
-        thrust = np.clip(thrust, 0.2, 0.6)
+        # Store values for next iteration
+        process_detection_with_control.last_pitch = pitch
+        process_detection_with_control.last_yaw = yaw_rate
+        process_detection_with_control.last_thrust = thrust
+        
+        # Clip values to safe ranges (tightened limits)
+        pitch = np.clip(pitch, -0.2, 0.2)        # reduced from ±0.3
+        yaw_rate = np.clip(yaw_rate, -0.3, 0.3)  # reduced from ±0.5
+        thrust = np.clip(thrust, 0.25, 0.5)       # narrowed range
 
         # Print drone movement direction
         direction = []

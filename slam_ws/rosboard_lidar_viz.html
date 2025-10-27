@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SICK TIM561 LiDAR - Polar Scan Viewer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a2e;
+            font-family: Arial, sans-serif;
+            color: white;
+        }
+        #container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #16c79a;
+            margin-bottom: 20px;
+        }
+        #canvas {
+            background: #16213e;
+            border-radius: 10px;
+            display: block;
+            margin: 0 auto;
+            box-shadow: 0 0 20px rgba(22, 199, 154, 0.3);
+        }
+        #status {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 18px;
+            font-weight: bold;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .danger { background: #d32f2f; }
+        .warning { background: #f57c00; }
+        .caution { background: #fbc02d; color: #000; }
+        .clear { background: #388e3c; }
+        #info {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .info-box {
+            background: #16213e;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #0f3460;
+        }
+        .info-label {
+            color: #16c79a;
+            font-size: 12px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        .info-value {
+            font-size: 20px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>🎯 SICK TIM561 LiDAR - 270° Polar Scan</h1>
+        <canvas id="canvas" width="800" height="800"></canvas>
+        <div id="status" class="clear">Waiting for scan data...</div>
+        <div id="info">
+            <div class="info-box">
+                <div class="info-label">Points</div>
+                <div class="info-value" id="points">-</div>
+            </div>
+            <div class="info-box">
+                <div class="info-label">Nearest Obstacle</div>
+                <div class="info-value" id="nearest">-</div>
+            </div>
+            <div class="info-box">
+                <div class="info-label">FOV / Resolution</div>
+                <div class="info-value" id="fov">270° / 1.0°</div>
+            </div>
+            <div class="info-box">
+                <div class="info-label">Range</div>
+                <div class="info-value" id="range">0.05m - 10.0m</div>
+            </div>
+            <div class="info-box">
+                <div class="info-label">Scan Rate</div>
+                <div class="info-value" id="rate">50 Hz</div>
+            </div>
+            <div class="info-box">
+                <div class="info-label">Close Objects (<2m)</div>
+                <div class="info-value" id="close">-</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+    <script>
+        // ROS connection
+        const ros = new ROSLIB.Ros({
+            url: 'ws://localhost:9090'  // Rosbridge websocket
+        });
+
+        ros.on('connection', () => {
+            console.log('Connected to ROS');
+        });
+
+        ros.on('error', (error) => {
+            console.error('Error connecting to ROS:', error);
+            document.getElementById('status').textContent = '❌ ROS Connection Error';
+            document.getElementById('status').className = 'danger';
+        });
+
+        ros.on('close', () => {
+            console.log('Connection to ROS closed');
+        });
+
+        // Subscribe to /scan topic
+        const scanTopic = new ROSLIB.Topic({
+            ros: ros,
+            name: '/scan',
+            messageType: 'sensor_msgs/LaserScan'
+        });
+
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const maxRadius = Math.min(centerX, centerY) - 50;
+
+        function drawGrid() {
+            ctx.strokeStyle = '#0f3460';
+            ctx.lineWidth = 1;
+            
+            // Distance circles (1m intervals up to 10m)
+            for (let r = 1; r <= 10; r++) {
+                const radius = (r / 10) * maxRadius;
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+                ctx.stroke();
+                
+                // Distance labels
+                ctx.fillStyle = '#16c79a';
+                ctx.font = '12px Arial';
+                ctx.fillText(`${r}m`, centerX + radius + 5, centerY);
+            }
+            
+            // Angle lines (every 45°, covering -135° to +135°)
+            ctx.strokeStyle = '#0f3460';
+            for (let angle = -135; angle <= 135; angle += 45) {
+                const rad = (angle - 90) * Math.PI / 180;  // -90 to orient 0° forward
+                const x1 = centerX;
+                const y1 = centerY;
+                const x2 = centerX + maxRadius * Math.cos(rad);
+                const y2 = centerY + maxRadius * Math.sin(rad);
+                
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.stroke();
+                
+                // Angle labels
+                ctx.fillStyle = '#16c79a';
+                ctx.font = '12px Arial';
+                const labelX = centerX + (maxRadius + 20) * Math.cos(rad);
+                const labelY = centerY + (maxRadius + 20) * Math.sin(rad);
+                ctx.fillText(`${angle}°`, labelX - 15, labelY + 5);
+            }
+            
+            // Center point
+            ctx.fillStyle = '#16c79a';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 5, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // Forward indicator
+            ctx.fillStyle = '#16c79a';
+            ctx.font = 'bold 16px Arial';
+            ctx.fillText('⬆ FORWARD', centerX - 40, 30);
+        }
+
+        function drawScan(msg) {
+            // Clear canvas
+            ctx.fillStyle = '#16213e';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid
+            drawGrid();
+            
+            // Extract scan data
+            const ranges = msg.ranges;
+            const angleMin = msg.angle_min;
+            const angleIncrement = msg.angle_increment;
+            const rangeMin = msg.range_min;
+            const rangeMax = msg.range_max;
+            
+            let validPoints = 0;
+            let minDist = Infinity;
+            let closeCount = 0;
+            
+            // Draw scan points
+            for (let i = 0; i < ranges.length; i++) {
+                const range = ranges[i];
+                
+                // Skip invalid points
+                if (range < rangeMin || range > rangeMax || !isFinite(range)) {
+                    continue;
+                }
+                
+                validPoints++;
+                if (range < minDist) minDist = range;
+                if (range < 2.0) closeCount++;
+                
+                // Calculate angle (LiDAR angles relative to forward = 0°)
+                const angle = angleMin + i * angleIncrement;
+                
+                // Convert to canvas coordinates (rotate -90° so forward is up)
+                const canvasAngle = angle - Math.PI / 2;
+                const radius = (range / 10) * maxRadius;  // Scale to 10m max
+                const x = centerX + radius * Math.cos(canvasAngle);
+                const y = centerY + radius * Math.sin(canvasAngle);
+                
+                // Color based on distance
+                let color;
+                if (range < 1.0) color = '#d32f2f';      // Red: <1m
+                else if (range < 2.0) color = '#f57c00'; // Orange: <2m
+                else if (range < 6.0) color = '#fbc02d'; // Yellow: <6m
+                else color = '#16c79a';                   // Green: >6m
+                
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+            
+            // Update status
+            let statusText, statusClass;
+            if (minDist < 0.5) {
+                statusText = `⚠️ DANGER! Obstacle at ${minDist.toFixed(2)}m`;
+                statusClass = 'danger';
+            } else if (minDist < 1.0) {
+                statusText = `⚠️ WARNING: Close obstacle at ${minDist.toFixed(2)}m`;
+                statusClass = 'warning';
+            } else if (minDist < 2.0) {
+                statusText = `⚠️ CAUTION: Obstacle at ${minDist.toFixed(2)}m (${closeCount} points < 2m)`;
+                statusClass = 'caution';
+            } else {
+                statusText = `✅ Clear - Nearest: ${minDist.toFixed(2)}m`;
+                statusClass = 'clear';
+            }
+            
+            document.getElementById('status').textContent = statusText;
+            document.getElementById('status').className = statusClass;
+            document.getElementById('points').textContent = validPoints;
+            document.getElementById('nearest').textContent = `${minDist.toFixed(2)}m`;
+            document.getElementById('close').textContent = closeCount;
+            
+            // Update FOV info
+            const fovDeg = ((msg.angle_max - msg.angle_min) * 180 / Math.PI).toFixed(0);
+            const resDeg = (msg.angle_increment * 180 / Math.PI).toFixed(2);
+            document.getElementById('fov').textContent = `${fovDeg}° / ${resDeg}°`;
+            document.getElementById('range').textContent = `${rangeMin.toFixed(2)}m - ${rangeMax.toFixed(1)}m`;
+        }
+
+        scanTopic.subscribe((message) => {
+            drawScan(message);
+        });
+
+        // Initial grid
+        drawGrid();
+    </script>
+</body>
+</html>

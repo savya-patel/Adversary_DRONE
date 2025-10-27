@@ -1,0 +1,37 @@
+# ROS 2 workspace artifacts (colcon)
+build/
+install/
+log/
+
+# Catkin (ROS1) just in case
+devel/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Editors/IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environments
+.venv/
+.env
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Data/binaries (opt-in; uncomment as needed)
+# *.bag
+# *.pcd
+# *.ply
+# *.stl
+# *.dae
+# *.urdf
+# *.onnx
+# *.pt
