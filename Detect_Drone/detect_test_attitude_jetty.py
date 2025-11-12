@@ -79,24 +79,50 @@ def send_attitude_target(vehicle, roll=0.0, pitch=0.0, yaw_rate=0.0, thrust=0.0)
     print(f"Sent attitude target: roll={roll:.3f}, pitch={pitch:.3f}, yaw_rate={yaw_rate:.3f}, thrust={thrust:.3f}")
 
 
+def maintain_altitude(vehicle, last_thrust):
+    """
+    Maintain current altitude when switching between flight modes.
+    """
+    send_attitude_target(vehicle, 
+                        roll=0.0,
+                        pitch=0.0,
+                        yaw_rate=0.0,
+                        thrust=last_thrust)
+
 def process_detection_with_control(im0, det, names, frame_w, frame_h, vehicle):
     """
     Process YOLO detections and send attitude commands to Cube Orange.
     Called as a callback for each detected bounding box.
     """
+    # Only perform control logic in GUIDED_NOGPS mode
+    if vehicle.mode.name != 'GUIDED_NOGPS':
+        if hasattr(process_detection_with_control, 'last_thrust'):
+            maintain_altitude(vehicle, process_detection_with_control.last_thrust)
+        return
     for *xyxy, conf, cls in reversed(det):
         # Get bounding box center
         x1, y1, x2, y2 = map(int, xyxy)
         x_center = int((x1 + x2) / 2)
         y_center = int((y1 + y2) / 2)
 
+        # Draw frame center marker (blue crosshair)
+        center_x = frame_w // 2
+        center_y = frame_h // 2
+        
+        # Draw blue crosshair at frame center
+        cross_size = 20
+        cross_color = (255, 0, 0)  # BGR: Blue
+        cv2.line(im0, (center_x - cross_size, center_y), (center_x + cross_size, center_y), cross_color, 2)
+        cv2.line(im0, (center_x, center_y - cross_size), (center_x, center_y + cross_size), cross_color, 2)
+        cv2.circle(im0, (center_x, center_y), 2, cross_color, -1)  # Center dot
+        
         # Display center coordinates
         cv2.putText(im0, f"Center: ({x_center},{y_center})", (10, 90), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
         print(f"Detected {names[int(cls)]} at (x={x_center}, y={y_center}) with conf={conf:.2f}")
         
-        # Mark center with color based on confidence
+        # Mark target center with color based on confidence
         dot_color = (0, 165, 255) if conf < 0.75 else (0, 0, 255)
         cv2.circle(im0, (x_center, y_center), 5, dot_color, -1)
 
@@ -114,18 +140,18 @@ def process_detection_with_control(im0, det, names, frame_w, frame_h, vehicle):
 
         # Size-based depth estimation
         bbox_h = y2 - y1
-        desired_size = frame_h / 5
+        desired_size = frame_h / 6
         err_z = bbox_h - desired_size
 
-        # Tunable gains (reduced for smoother response)
-        Kp_pitch = 0.0005   # forward/backward (halved)
-        Kp_thrust = 0.0003  # up/down (reduced)
-        Kp_yaw = 0.0005     # yaw rate (halved)
+        # Tunable gains (reduced further for 15-20% thrust range)
+        Kp_pitch = 0.0003   # forward/backward (reduced by 40%)
+        Kp_thrust = 0.001  # up/down (reduced by 66% for smaller thrust adjustments)
+        Kp_yaw = 0.0003     # yaw rate (reduced by 40%)
         
-        # Deadband - ignore tiny errors to prevent jitter
-        deadband_x = 20  # pixels
-        deadband_y = 20  # pixels
-        deadband_z = 10  # pixels
+        # Increased deadband to prevent small movements with lower thrust
+        deadband_x = 20  # pixels (increased to reduce small yaw corrections)
+        deadband_y = 20  # pixels (increased for thrust stability)
+        deadband_z = 15  # pixels (increased to reduce small pitch corrections)
         
         # Apply deadband to errors
         err_x = 0 if abs(err_x) < deadband_x else err_x
@@ -137,12 +163,12 @@ def process_detection_with_control(im0, det, names, frame_w, frame_h, vehicle):
         if not hasattr(process_detection_with_control, 'last_pitch'):
             process_detection_with_control.last_pitch = 0
             process_detection_with_control.last_yaw = 0
-            process_detection_with_control.last_thrust = 0.3
+            process_detection_with_control.last_thrust = 0.15  # Start at testing hover point
         
         # Convert image-space errors to attitude commands with smoothing
         target_pitch = -Kp_pitch * err_z           # forward/backward tilt
         target_yaw = Kp_yaw * err_x                # turning left/right
-        target_thrust = 0.3 + (Kp_thrust * (-err_y))  # altitude correction
+        target_thrust = 0.15 + (Kp_thrust * (-err_y))  # altitude correction with 15% base thrust
         
         # Apply exponential smoothing
         pitch = alpha * target_pitch + (1 - alpha) * process_detection_with_control.last_pitch
@@ -159,26 +185,52 @@ def process_detection_with_control(im0, det, names, frame_w, frame_h, vehicle):
         # Clip values to safe ranges (tightened limits)
         pitch = np.clip(pitch, -0.2, 0.2)        # reduced from ±0.3
         yaw_rate = np.clip(yaw_rate, -0.3, 0.3)  # reduced from ±0.5
-        thrust = np.clip(thrust, 0.25, 0.5)       # narrowed range
+        #thrust = np.clip(thrust, 0.25, 0.5)       # narrowed range
+
+        # === Thrust scaling limiter ===
+        # Safe throttle band (10% range from 10-20%)
+        MIN_THRUST = 0.10  # Minimum 10% thrust
+        MAX_THRUST = 0.20  # Maximum 20% throttle
+
+        # Ensure control logic output is between 0–1 before scaling
+        thrust_control = np.clip(thrust, 0.0, 1.0)
+
+        # Rescale control output so 0.0→MIN_THRUST and 1.0→MAX_THRUST
+        thrust_scaled = MIN_THRUST + thrust_control * (MAX_THRUST - MIN_THRUST)
+
+        # clipped again for safety
+        thrust = np.clip(thrust_scaled, MIN_THRUST, MAX_THRUST)  # Ensure within 10-20% range
 
         # Print drone movement direction
         direction = []
-        if pitch > 0.05:
+
+        # Compute hover midpoint
+        hover_thrust = (MIN_THRUST + MAX_THRUST) / 2  # 0.15
+
+        if pitch > 0.03:  # Reduced threshold to match smaller movements
             direction.append("pitching forward")
-        elif pitch < -0.05:
+        elif pitch < -0.03:
             direction.append("pitching backward")
 
-        if thrust > 0.45:
+        if thrust > 0.120:  # Adjusted for new thrust range (10-20%)
             direction.append("ascending")
-        elif thrust < 0.25:
+        elif thrust < 0.110:
             direction.append("descending")
 
-        if yaw_rate > 0.05:
+        # thrust_margin = 0.01 # deadband around hover to avoid flickering
+        # if thrust > hover_thrust + thrust_margin:
+        #     direction.append("ascending")
+        # elif thrust < hover_thrust - thrust_margin:
+        #     direction.append("descending")
+        else:
+            direction.append("holding altitude")
+
+        if yaw_rate > 0.03:  # Reduced threshold to match smaller movements
             direction.append("yawing right")
-        elif yaw_rate < -0.05:
+        elif yaw_rate < -0.03:
             direction.append("yawing left")
 
-        action_text = "Drone " + " + ".join(direction) if direction else "Drone holding attitude"
+        action_text = "Drone " + " + ".join(direction) #if direction else "Drone holding attitude"
         print(f"{action_text} | pitch={math.degrees(pitch):.1f}°, thrust={thrust:.2f}, yaw_rate={yaw_rate:.2f} rad/s")
         cv2.putText(im0, action_text, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
@@ -211,20 +263,24 @@ def run_with_attitude_control(
     vehicle = connect(serial_port, baud=baud, wait_ready=True)
     print(f"Connected. Vehicle mode: {vehicle.mode.name}, Armed: {vehicle.armed}")
 
-    # Set mode to GUIDED_NOGPS
-    print("Setting mode to GUIDED_NOGPS...")
-    vehicle.mode = VehicleMode("GUIDED_NOGPS")
-    while vehicle.mode.name != 'GUIDED_NOGPS':
-        print("Waiting for mode change...")
-        time.sleep(1)
-    print("Mode set to GUIDED_NOGPS")
+    # Initialize mode handler
+    last_mode = vehicle.mode.name
+    print(f"Current flight mode: {last_mode}")
 
-    # Arm motors (NO PROPS for testing!)
-    vehicle.armed = True
-    while not vehicle.armed:
-        print("Waiting for arming...")
-        time.sleep(1)
-    print("Vehicle armed!")
+    # Add mode change callback
+    @vehicle.on_attribute('mode')
+    def mode_callback(self, attr_name, value):
+        nonlocal last_mode
+        if last_mode != value.name:
+            print(f"Flight mode changed from {last_mode} to {value.name}")
+            if value.name == 'GUIDED_NOGPS':
+                print("Entering autonomous control mode")
+            elif hasattr(process_detection_with_control, 'last_thrust'):
+                # Maintain current altitude during mode transition
+                maintain_altitude(vehicle, process_detection_with_control.last_thrust)
+            last_mode = value.name
+
+    print("Ready for flight mode control (STABILIZE/ALT_HOLD/GUIDED_NOGPS)")
 
     # Define frame callback that processes detections with attitude control
     def frame_callback(frame, det, names, frame_w, frame_h):
@@ -235,16 +291,46 @@ def run_with_attitude_control(
         names: class names dictionary
         frame_w, frame_h: frame dimensions
         """
+
         if len(det) > 0:
             # Process detections with attitude control
             process_detection_with_control(frame, det, names, frame_w, frame_h, vehicle)
         else:
-            # Hover when no target detected
+                        # Hover when no target detected
             print("No target detected. Hovering...")
-            send_attitude_target(vehicle, 0, 0, 0, 0.3)
+            send_attitude_target(vehicle, 0, 0, 0, 0.15)  # Base hover thrust at 15% (testing range)
+
+        # Check for 'q' key to initiate safe shutdown
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            print("\nSafe shutdown initiated by user ('q' pressed)...")
+            
+            # First set all controls to neutral/zero
+            print("Setting controls to neutral...")
+            send_attitude_target(vehicle, roll=0, pitch=0, yaw_rate=0, thrust=0)
+            time.sleep(0.5)  # Wait for controls to take effect
+            
+            # Then disarm
+            print("Disarming vehicle...")
+            vehicle.armed = False
+            
+            # Wait for confirmation that we're disarmed
+            timeout = time.time() + 5  # 5 second timeout
+            while vehicle.armed and time.time() < timeout:
+                print("Waiting for disarm...")
+                time.sleep(0.5)
+                
+            if vehicle.armed:
+                print("WARNING: Vehicle may still be armed!")
+            else:
+                print("Vehicle successfully disarmed")
+                
+            # Close the connection
+            vehicle.close()
+            print("Vehicle connection closed")
+            return False  # Stop processing
         
         return True  # Continue processing
-
+    
     try:
         # Call the YOLO detection function from detect_test_jetty
         yolo_run(

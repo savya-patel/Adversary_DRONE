@@ -1,8 +1,8 @@
 # USB LiDAR SLAM - Quick Start
 
-SICK TiM561 LiDAR + SLAM Toolbox over USB (no Ethernet, no odometry).
+SICK TiM561 LiDAR + **Google Cartographer** SLAM over USB (no Ethernet, **no odometry needed**!).
 
-## ⚡ Quick Start
+## ⚡ Quick Start (Cartographer - RECOMMENDED)
 
 **Rebuild (after code changes):**
 ```bash
@@ -11,16 +11,38 @@ colcon build --packages-select sick_tim_usb_ros2 slam_config --symlink-install -
 source install/setup.bash
 ```
 
-**Launch SLAM:**
+**Launch Cartographer SLAM (NO ODOMETRY!):**
+```bash
+cd ~/Adversary_DRONE/slam_ws
+./run_cartographer.sh
+```
+
+**Expected:**
+- ✅ `USB bulk connected (IN=0x81, OUT=0x02)` or `USB serial at /dev/ttyACM0`
+- ✅ `Publishing scan: 811 points, 0.333° increment`
+- ✅ `Found 'cartographer_2d_lidar.lua'`
+- ✅ `Added trajectory with ID '0'`
+- ✅ `Inserted submap (0, 0)` and incrementing
+
+**Why Cartographer?**
+- ✅ **Works perfectly without odometry** (pure lidar scan matching)
+- ✅ **No TF message filter bugs** (unlike slam_toolbox on Humble)
+- ✅ High-quality loop closure detection
+- ✅ Optimized for real-time on embedded systems
+
+---
+
+## Alternative: SLAM Toolbox (Has Issues on Humble)
+
+**Note:** slam_toolbox has a known ROS 2 Humble bug where the TF message filter drops all scans when using high-frequency LiDAR data. Use Cartographer instead!
+
+**If you still want to try it:**
 ```bash
 cd ~/Adversary_DRONE/slam_ws
 sudo bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && ros2 launch slam_config slam_usb.launch.py"
 ```
 
-**Expected:**
-- ✅ `USB bulk connected (IN=0x81, OUT=0x02)` or `USB serial at /dev/ttyACM0`
-- ✅ `Publishing scan: 271 points`
-- ✅ `Registering sensor: [Custom Described Lidar]`
+**Known issue:** You'll see `Message Filter dropping message... queue is full` continuously.
 
 ---
 
@@ -140,3 +162,63 @@ sudo -E bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash 
 - **8080:** HTTP web page (lidar_web_viz.py)
 - **8888:** Rosboard web interface
 - **9090:** WebSocket bridge (rosbridge) for ROS2 ↔ JavaScript
+
+---
+
+## Lidar-only vs with laser_scan_matcher
+
+Two valid ways to run without a wheel odometer:
+
+1) Simple (SLAM-only, current setup)
+- Params in `src/slam_config/config/mapper_params_online_async.yaml`:
+	- `use_odometry: false`
+	- `use_tf_scan_transformation: false`
+	- `provide_odom_frame: true`
+- TFs:
+	- `map -> odom` (slam_toolbox)
+	- `odom -> base_link` (identity static TF)
+	- `base_link -> laser_frame` (static TF)
+- Notes:
+	- Global pose in `map` still updates because slam_toolbox updates `map->odom`.
+	- Good for mapping and visualization; no `/odom` topic for controllers.
+
+2) With `ros2_laser_scan_matcher` (recommended if you need /odom)
+- Start `laser_scan_matcher` from `/scan`.
+- Update SLAM params:
+	- `use_odometry: true`
+	- `use_tf_scan_transformation: true`
+	- `provide_odom_frame: true`
+- TFs:
+	- `map -> odom` (slam_toolbox)
+	- `odom -> base_link` (laser_scan_matcher)
+	- `base_link -> laser_frame` (static TF)
+- Notes:
+	- Provides smooth local odometry on `/odom` with twist.
+	- SLAM still handles global corrections via `map->odom`.
+
+## Using rf2o_laser_odometry (lightweight odom)
+
+If you prefer a lighter odometry node, use `rf2o_laser_odometry` instead of laser_scan_matcher.
+
+Install (Humble):
+```bash
+sudo apt-get update
+sudo apt-get install -y ros-humble-rf2o-laser-odometry
+```
+
+Run with SLAM (odom-enabled variant):
+```bash
+cd ~/Adversary_DRONE/slam_ws
+sudo bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && ros2 launch slam_config slam_usb_with_odom.launch.py"
+```
+
+What this does:
+- rf2o publishes `odom -> base_link` and `/odom` from `/scan`.
+- slam_toolbox uses odom and publishes `map -> odom` (params file: `mapper_params_online_async_odom.yaml`).
+- Identity `odom -> base_link` static TF is NOT used in this variant.
+
+Verify TF and topics:
+```bash
+sudo -E bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && ros2 run tf2_ros tf2_echo odom base_link"
+sudo -E bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && ros2 topic echo -n1 /odom"
+```

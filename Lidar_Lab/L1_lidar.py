@@ -157,20 +157,24 @@ class Lidar():
     def connect(self):
         self.lidar = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.lidar.settimeout(10)   #in seconds
+        self.connected = False
         try:
             self.lidar.connect((self.IP, 2112))
         except socket.timeout:
             print("Cannot connect to lidar due to timeout")
-        except OSError:
-            print("Cannot connect to lidar due to network")
+            return False
+        except OSError as e:
+            print(f"Cannot connect to lidar due to network: {e}")
+            return False
         else:
             self.lidar.settimeout(1)   #close timeout after so not break the connection
             # activate stream
             self.lidar.send(b'\x02sEN LMDscandata 1\x03\0')
 
             self.datagrams_generator = datagrams_from_socket(self.lidar)
-
+            self.connected = True
             print("Lidar connected")
+            return True
 
     # Returns the current Lidar scan data.
     def get(self, num_points=108):
@@ -187,6 +191,15 @@ class Lidar():
             data[idx][1] = partitioned_angles[idx][min_idx]
             
         return data
+    
+    # Returns the distance at 0 degrees (dead center / straight ahead)
+    def get_center_distance(self):
+        if self.ds is None:
+            return None
+        
+        # Center index: 811 points from -135° to +135°, so 0° is at index 405
+        center_idx = len(self.ds) // 2
+        return self.ds[center_idx]
     
     # Stops the Lidar thread.
     def kill(self, processor):
@@ -220,6 +233,10 @@ class Lidar():
     # The main loop that constantly processes Lidar scans
     @threaded
     def run(self):
+        if not hasattr(self, 'connected') or not self.connected:
+            print("Cannot start Lidar thread - not connected")
+            return
+            
         print("Lidar started")
     
         while not self.stop:
@@ -249,7 +266,9 @@ if __name__ == "__main__":
     lidarsensor = Lidar()
 
     # Connect to the Lidar device
-    lidarsensor.connect()
+    if not lidarsensor.connect():
+        print("Failed to connect to LiDAR. Exiting.")
+        exit(1)
 
     # Start the Lidar thread
     processor = lidarsensor.run()
@@ -259,10 +278,15 @@ if __name__ == "__main__":
     try:
         while True:
             time.sleep(0.5)
-            print(lidarsensor.get())
+            center_dist = lidarsensor.get_center_distance()
+            if center_dist is not None:
+                print(f"Distance at 0° (center): {center_dist:.3f}m")
+            # Uncomment to see full data array:
+            # print(lidarsensor.get())
     except KeyboardInterrupt:
         print("Stopping Lidar...")
     finally:
         # Kill the Lidar thread when done
-        lidarsensor.kill(processor)
+        if lidarsensor.connected:
+            lidarsensor.kill(processor)
         

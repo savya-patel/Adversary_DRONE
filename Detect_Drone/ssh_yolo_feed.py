@@ -13,8 +13,8 @@ from detect_test_attitude_jetty import (
 from dronekit import connect, VehicleMode
 
 """
-copy commands
-scp eagle@10.250.240.81:/home/eagle/Adversary_DRONE/Detect_Drone/ssh_feed.py C:\Users\savya\Downloads\ssh_feed.py  
+copy commands (use forward slashes in Windows paths)
+scp eagle@10.250.240.81:/home/eagle/Adversary_DRONE/Detect_Drone/ssh_feed.py C:/Users/savya/Downloads/ssh_feed.py
 
 command to run after activating the virtual environment:
 ON JETSON NANO (SERVER SIDE - YOLO only):
@@ -39,7 +39,15 @@ DEFAULT_PORT = 5000
 HEADER_FMT = "!I"  # 4-byte length header
 
 def serve(host="0.0.0.0", port=DEFAULT_PORT, jpeg_quality=80, device=0, weights='best.pt', 
-          attitude_control=False, serial_port='/dev/ttyACM0', baud=57600):
+          attitude_control=False, serial_port='/dev/ttyACM0', baud=57600, conf_thres=0.25):
+    """
+    Server function that runs YOLO detection and optionally connects to vehicle for attitude control.
+    When attitude_control is enabled:
+    - Connects to the vehicle but does not change mode
+    - Monitors mode changes from RC control
+    - Only performs autonomous control when in GUIDED_NOGPS mode
+    - Maintains altitude when switching between modes
+    """
     """Server: runs YOLO and streams frames to client, optionally with attitude control"""
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -69,21 +77,14 @@ def serve(host="0.0.0.0", port=DEFAULT_PORT, jpeg_quality=80, device=0, weights=
             print(f"[server] Connecting to Cube Orange on {serial_port}...")
             vehicle = connect(serial_port, baud=baud, wait_ready=True)
             print(f"[server] Connected. Vehicle mode: {vehicle.mode.name}, Armed: {vehicle.armed}")
-
-            # Set mode to GUIDED_NOGPS
-            print("[server] Setting mode to GUIDED_NOGPS...")
-            vehicle.mode = VehicleMode("GUIDED_NOGPS")
-            while vehicle.mode.name != 'GUIDED_NOGPS':
-                print("[server] Waiting for mode change...")
-                time.sleep(1)
-            print("[server] Mode set to GUIDED_NOGPS")
-
-            # Arm motors (NO PROPS for testing!)
-            vehicle.armed = True
-            while not vehicle.armed:
-                print("[server] Waiting for arming...")
-                time.sleep(1)
-            print("[server] Vehicle armed!")
+            
+            # Add mode change callback to monitor RC mode changes
+            @vehicle.on_attribute('mode')
+            def mode_callback(self, attr_name, value):
+                print(f"[server] Flight mode changed to: {value.name}")
+            
+            print("[server] Ready - Waiting for RC control mode changes...")
+            print("[server] Use RC switch to change modes (STABILIZE/ALT_HOLD/GUIDED_NOGPS)")
 
         # Use detect_test_jetty.run with a frame_callback to stream frames
         def frame_callback(frame, det, names, frame_w, frame_h):
@@ -95,10 +96,13 @@ def serve(host="0.0.0.0", port=DEFAULT_PORT, jpeg_quality=80, device=0, weights=
             if attitude_control and vehicle is not None:
                 # Process detections with attitude control
                 if len(det) > 0:
+                    # Debug print for detection confidence
+                    for *xyxy, conf, cls in det:
+                        print(f"[server] Detection: class={names[int(cls)]}, confidence={conf:.2f}")
                     process_detection_with_control(frame, det, names, frame_w, frame_h, vehicle)
                 else:
                     print("[server] No target detected. Hovering...")
-                    send_attitude_target(vehicle, 0, 0, 0, 0.3)
+                    send_attitude_target(vehicle, 0, 0, 0, 0.2)
             
             # Stream frame to client
             return send_frame(frame)
@@ -108,13 +112,14 @@ def serve(host="0.0.0.0", port=DEFAULT_PORT, jpeg_quality=80, device=0, weights=
             weights=weights,
             source=str(device) if isinstance(device, int) else device,
             max_det=1,
-            imgsz=320,
+            imgsz=640,  # Increased from 320 to 640 for higher resolution
             nosave=True,
             device=str(device),
             half=True,
             view_img=False,
             frame_callback=frame_callback,
             draw=True,  # Enable bounding box drawing
+            conf_thres=conf_thres  # Pass confidence threshold to YOLO
         )
     finally:
         if attitude_control and vehicle is not None:
@@ -162,12 +167,13 @@ def main():
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--server", action="store_true", help="Run as server (Jetson)")
-    group.add_argument("--client", action="store_true", help="Run as client (viewing machine)")
+    parser.add_argument("--client", action="store_true", help="Run as client (viewing machine)")
     parser.add_argument("--host", default="localhost", help="Host address")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port number")
     parser.add_argument("--device", type=int, default=0, help="Camera device (server only)")
     parser.add_argument("--quality", type=int, default=80, help="JPEG quality (server only)")
     parser.add_argument("--weights", type=str, default='best.pt', help='Path to model weights (server only)')
+    parser.add_argument("--conf-thres", type=float, default=0.25, help='Confidence threshold for YOLO detections')
     
     # Attitude control options
     parser.add_argument("--attitude-control", action="store_true", 
@@ -187,7 +193,8 @@ def main():
             weights=args.weights,
             attitude_control=args.attitude_control,
             serial_port=args.serial,
-            baud=args.baud
+            baud=args.baud,
+            conf_thres=args.conf_thres
         )
     else:
         client(host=args.host, port=args.port)

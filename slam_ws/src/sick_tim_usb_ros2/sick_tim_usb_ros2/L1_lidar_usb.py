@@ -130,9 +130,12 @@ def threaded(fn):
 
 
 class Lidar():
-    def __init__(self, port: str | None = None, angular_resolution: str = ANGULAR_RESOLUTION):
-        self.port = port or find_serial_port()
+    def __init__(self, port: str | None = None, angular_resolution: str = ANGULAR_RESOLUTION, prefer_usb: bool = True):
+        # Serial path disabled: always use PyUSB bulk (19a2:5001)
+        # Keep signature for compatibility, but ignore 'port' and force USB.
+        self.port = None
         self.angular_resolution = angular_resolution
+        self.prefer_usb = True
         self.stop = False
 
         self.ds = None  # latest distances
@@ -167,8 +170,9 @@ class Lidar():
         return b''
 
     def connect(self):
-        """Open serial port if present, else fall back to PyUSB bulk; initialize for streaming."""
-        if self.port is not None:
+        """Open PyUSB bulk transport and initialize for streaming (serial disabled)."""
+        # Serial transport intentionally disabled to avoid matching other /dev/ttyACM* devices.
+        if False and self.port is not None:
             # Serial transport
             self.ser = serial.Serial(
                 port=self.port,
@@ -201,22 +205,32 @@ class Lidar():
             print("LiDAR streaming enabled (serial)")
             return
 
-        # Fallback: PyUSB bulk transport
+        # PyUSB bulk transport
         if not HAVE_USB:
-            raise RuntimeError("No serial port found and PyUSB not available. Install pyusb or check /dev/ttyACM*.")
+            raise RuntimeError("PyUSB not available. Install 'pyusb' to use USB bulk with SICK TiM.")
 
         dev = usb.core.find(idVendor=0x19A2, idProduct=0x5001)
         if dev is None:
             raise RuntimeError("SICK TIM device not found via USB (19a2:5001). Check cabling and lsusb.")
-        # Detach kernel drivers on all interfaces if needed
+        
+        # Detach kernel driver BEFORE set_configuration to avoid "Resource busy"
         try:
-            for i in range(dev.get_active_configuration().bNumInterfaces):
+            if dev.is_kernel_driver_active(0):
+                dev.detach_kernel_driver(0)
+        except Exception:
+            pass  # Ignore if already detached or no driver
+        
+        dev.set_configuration()
+        cfg = dev.get_active_configuration()
+        
+        # Detach any remaining kernel drivers on all interfaces
+        try:
+            for i in range(cfg.bNumInterfaces):
                 if dev.is_kernel_driver_active(i):
                     dev.detach_kernel_driver(i)
         except Exception:
             pass
-        dev.set_configuration()
-        cfg = dev.get_active_configuration()
+        
         ep_in, ep_out = None, None
         # Search all interfaces for a usable IN and OUT endpoint (prefer BULK)
         for intf in cfg:

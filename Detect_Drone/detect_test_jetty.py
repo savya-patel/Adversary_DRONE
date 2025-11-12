@@ -168,8 +168,8 @@ def run(weights='yolov5s.pt',  # model.pt path(s)
                     x_center = int((x1 + x2) / 2)
                     y_center = int((y1 + y2) / 2)
 
-                    # Only show detection info and visuals for confidence >= 0.5
-                    if conf >= 0.5:
+                    # Only show detection info and visuals for confidence >= 0.25
+                    if conf >= 0.25:
                         print(f"Detected {names[int(cls)]} at (x={x_center}, y={y_center}) with conf={conf:.2f}")
                         
                         # Change dot color based on confidence: orange < 0.75, red >= 0.75

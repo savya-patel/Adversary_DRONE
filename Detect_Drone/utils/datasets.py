@@ -294,8 +294,8 @@ class LoadStreams:  # multiple IP or RTSP cameras
             cap = cv2.VideoCapture(s)
             
 # Add the following lines to set the camera's resolution and FPS 
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640) 
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480) 
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1080) 
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720) 
             cap.set(cv2.CAP_PROP_FPS, 30)
 # Optional but recommended for performance on Raspberry Pi 
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))

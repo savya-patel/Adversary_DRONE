@@ -43,14 +43,17 @@ def generate_launch_description():
             'range_min': 0.1,
             'range_max': 10.0,  # TIM561 max range
             'angular_resolution': '1.0',
+            'log_throttle_sec': 2.0,
         }]
     )
     
     # Static transforms for TF tree: odom -> base_link -> laser_frame
-    # SLAM Toolbox publishes map->odom dynamically
+    # SLAM Toolbox will publish map->odom dynamically. We publish an identity
+    # odom->base_link to close the TF tree in lidar-only setups (this is NOT an
+    # odometry sensor, just a fixed transform so frames are connected).
     # Note: Using --frame-id parent_frame --child-frame-id child_frame format (ROS 2 Humble)
-    
-    # odom -> base_link (identity transform, represents robot pose in odom frame)
+
+    # odom -> base_link (identity transform)
     odom_to_base_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -67,7 +70,6 @@ def generate_launch_description():
             '--child-frame-id', 'base_link'
         ]
     )
-    
     # base_link -> laser_frame (LiDAR mounting position)
     # Adjust x/y/z to match your robot's LiDAR mount (currently 0.1m above base_link)
     base_to_laser_tf = Node(

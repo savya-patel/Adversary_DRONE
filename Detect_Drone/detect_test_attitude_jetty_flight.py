@@ -1,0 +1,382 @@
+"""
+Jetson CUDA YOLOv5 with Attitude Control for Cube Orange - FULL FLIGHT VERSION
+
+This script runs YOLOv5 on Jetson with CUDA, detects the target drone,
+computes bounding box errors, and sends attitude commands to Cube Orange
+to center the target in the frame.
+
+This version uses full flight thrust ranges (30-70%) centered around 50% hover point.
+
+Usage:
+    Activate virtual environment first:
+    $ cd Adversary_DRONE/
+    $ source venv/bin/activate
+    
+    Run on Jetson:
+    $ cd Detect_Drone/
+    $ python detect_test_attitude_jetty_flight.py --weights best.pt --source 0 --max-det 1 --imgsz 320 --nosave --device 0
+    
+Flow:
+    1. YOLO detects target drone on Jetson GPU -> gets bounding box center (x_center, y_center)
+    2. Computes error (err_x, err_y, err_z) relative to frame center
+    3. Maps error -> attitude commands (roll, pitch, yaw_rate, thrust)
+    4. Sends MAVLink messages via serial to Cube Orange
+    5. Cube Orange adjusts attitude/yaw to keep target centered
+"""
+
+import os
+os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
+
+import argparse
+import time
+import math
+import cv2
+import numpy as np
+
+# MAVLink / DroneKit imports
+from dronekit import connect, VehicleMode
+from pymavlink import mavutil
+
+# Import YOLO detection from detect_test_jetty
+from detect_test_jetty import run as yolo_run
+
+
+def to_quaternion(roll=0.0, pitch=0.0, yaw=0.0):
+    """Convert Euler angles (radians) to quaternion [w, x, y, z]."""
+    t0 = math.cos(yaw * 0.5)
+    t1 = math.sin(yaw * 0.5)
+    t2 = math.cos(roll * 0.5)
+    t3 = math.sin(roll * 0.5)
+    t4 = math.cos(pitch * 0.5)
+    t5 = math.sin(pitch * 0.5)
+    w = t0 * t2 * t4 + t1 * t3 * t5
+    x = t0 * t3 * t4 - t1 * t2 * t5
+    y = t0 * t2 * t5 + t1 * t3 * t4
+    z = t1 * t2 * t4 - t0 * t3 * t5
+    return [w, x, y, z]
+
+
+def send_attitude_target(vehicle, roll=0.0, pitch=0.0, yaw_rate=0.0, thrust=0.0):
+    """
+    Send SET_ATTITUDE_TARGET MAVLink message.
+    roll, pitch in radians
+    yaw_rate in rad/s
+    thrust: 0.0 - 1.0
+    """
+    q = to_quaternion(roll, pitch, 0)  # yaw=0 for now
+
+    msg = vehicle.message_factory.set_attitude_target_encode(
+        0,              # time_boot_ms
+        1,              # target system
+        1,              # target component
+        0b00000111,     # ignore body rates except yaw_rate
+        q,              # quaternion [w, x, y, z]
+        0, 0, yaw_rate, # roll_rate, pitch_rate, yaw_rate
+        thrust          # thrust 0-1
+    )
+
+    vehicle.send_mavlink(msg)
+    vehicle.flush()
+
+    print(f"Sent attitude target: roll={roll:.3f}, pitch={pitch:.3f}, yaw_rate={yaw_rate:.3f}, thrust={thrust:.3f}")
+
+
+def maintain_altitude(vehicle, last_thrust):
+    """
+    Maintain current altitude when switching between flight modes.
+    """
+    send_attitude_target(vehicle, 
+                        roll=0.0,
+                        pitch=0.0,
+                        yaw_rate=0.0,
+                        thrust=last_thrust)
+
+def process_detection_with_control(im0, det, names, frame_w, frame_h, vehicle):
+    """
+    Process YOLO detections and send attitude commands to Cube Orange.
+    Called as a callback for each detected bounding box.
+    """
+    # Only perform control logic in GUIDED_NOGPS mode
+    if vehicle.mode.name != 'GUIDED_NOGPS':
+        if hasattr(process_detection_with_control, 'last_thrust'):
+            maintain_altitude(vehicle, process_detection_with_control.last_thrust)
+        return
+
+    for *xyxy, conf, cls in reversed(det):
+        # Get bounding box center
+        x1, y1, x2, y2 = map(int, xyxy)
+        x_center = int((x1 + x2) / 2)
+        y_center = int((y1 + y2) / 2)
+
+        # Draw frame center marker (blue crosshair)
+        center_x = frame_w // 2
+        center_y = frame_h // 2
+        
+        # Draw blue crosshair at frame center
+        cross_size = 20
+        cross_color = (255, 0, 0)  # BGR: Blue
+        cv2.line(im0, (center_x - cross_size, center_y), (center_x + cross_size, center_y), cross_color, 2)
+        cv2.line(im0, (center_x, center_y - cross_size), (center_x, center_y + cross_size), cross_color, 2)
+        cv2.circle(im0, (center_x, center_y), 2, cross_color, -1)  # Center dot
+        
+        # Display center coordinates
+        cv2.putText(im0, f"Center: ({x_center},{y_center})", (10, 90), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        print(f"Detected {names[int(cls)]} at (x={x_center}, y={y_center}) with conf={conf:.2f}")
+        
+        # Mark target center with color based on confidence
+        dot_color = (0, 165, 255) if conf < 0.75 else (0, 0, 255)
+        cv2.circle(im0, (x_center, y_center), 5, dot_color, -1)
+
+        # --------- Control logic ---------------------
+        """
+        (0,0) is top-left of frame
+        The drone will:
+        - Yaw left/right to center the target horizontally (x-axis)
+        - Pitch forward/back to control distance (z-axis)
+        - Adjust thrust for vertical alignment (y-axis)
+        - Keep roll = 0 for stability
+        """
+        err_x = x_center - (frame_w // 2)  # horizontal error (pixels)
+        err_y = y_center - (frame_h // 2)  # vertical error (pixels)
+
+        # Size-based depth estimation
+        bbox_h = y2 - y1
+        desired_size = frame_h / 6
+        err_z = bbox_h - desired_size
+
+        # Tunable gains
+        Kp_pitch = 0.0003   # forward/backward
+        Kp_thrust = 0.001   # up/down
+        Kp_yaw = 0.0003     # yaw rate
+        
+        # Increased deadband to prevent small movements
+        deadband_x = 20  # pixels (for yaw corrections)
+        deadband_y = 20  # pixels (for thrust stability)
+        deadband_z = 15  # pixels (for pitch corrections)
+        
+        # Apply deadband to errors
+        err_x = 0 if abs(err_x) < deadband_x else err_x
+        err_y = 0 if abs(err_y) < deadband_y else err_y
+        err_z = 0 if abs(err_z) < deadband_z else err_z
+        
+        # Smoothing filter (exponential moving average)
+        alpha = 0.3  # smoothing factor (0-1), lower = smoother
+        if not hasattr(process_detection_with_control, 'last_pitch'):
+            process_detection_with_control.last_pitch = 0
+            process_detection_with_control.last_yaw = 0
+            process_detection_with_control.last_thrust = 0.5  # Start at hover point
+        
+        # Convert image-space errors to attitude commands with smoothing
+        target_pitch = -Kp_pitch * err_z           # forward/backward tilt
+        target_yaw = Kp_yaw * err_x                # turning left/right
+        target_thrust = 0.5 + (Kp_thrust * (-err_y))  # altitude correction from hover point
+        
+        # Apply exponential smoothing
+        pitch = alpha * target_pitch + (1 - alpha) * process_detection_with_control.last_pitch
+        yaw_rate = alpha * target_yaw + (1 - alpha) * process_detection_with_control.last_yaw
+        thrust = alpha * target_thrust + (1 - alpha) * process_detection_with_control.last_thrust
+        
+        # Keep roll at zero
+        roll = 0.0
+
+        # Store values for next iteration
+        process_detection_with_control.last_pitch = pitch
+        process_detection_with_control.last_yaw = yaw_rate
+        process_detection_with_control.last_thrust = thrust
+        
+        # Clip values to safe ranges
+        pitch = np.clip(pitch, -0.2, 0.2)        # ±0.2 rad
+        yaw_rate = np.clip(yaw_rate, -0.3, 0.3)  # ±0.3 rad/s
+
+        # === Thrust control for actual flight ===
+        # Full flight thrust range (30-70% for good control authority)
+        MIN_THRUST = 0.3  # Minimum 30% thrust
+        MAX_THRUST = 0.7  # Maximum 70% thrust
+        HOVER_THRUST = 0.5  # Hover point at 50% thrust
+
+        # Safety limits - clip to allowed range
+        thrust = np.clip(thrust, MIN_THRUST, MAX_THRUST)
+
+        # Print drone movement direction
+        direction = []
+
+        if pitch > 0.03:
+            direction.append("pitching forward")
+        elif pitch < -0.03:
+            direction.append("pitching backward")
+
+        if thrust > (HOVER_THRUST + 0.05):
+            direction.append("ascending")
+        elif thrust < (HOVER_THRUST - 0.05):
+            direction.append("descending")
+        else:
+            direction.append("holding altitude")
+
+        if yaw_rate > 0.03:
+            direction.append("yawing right")
+        elif yaw_rate < -0.03:
+            direction.append("yawing left")
+
+        action_text = "Drone " + " + ".join(direction)
+        print(f"{action_text} | pitch={math.degrees(pitch):.1f}°, thrust={thrust:.2f}, yaw_rate={yaw_rate:.2f} rad/s")
+        cv2.putText(im0, action_text, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        # Send to cube (with short command rate limit)
+        last_send_time = 0
+        current_time = time.time()
+        if current_time - last_send_time >= 0.1:  # send every 0.1 seconds
+            send_attitude_target(vehicle, roll, pitch, yaw_rate, thrust)
+            last_send_time = current_time
+        break
+
+
+def run_with_attitude_control(
+    weights='yolov5s.pt',
+    source='0',
+    imgsz=640,
+    conf_thres=0.25,
+    iou_thres=0.45,
+    max_det=1000,
+    device='',
+    serial_port='/dev/ttyACM0',
+    baud=57600,
+    **kwargs
+):
+    """
+    Run YOLO detection with attitude control for Cube Orange.
+    """
+    # Connect to Cube Orange
+    print(f"Connecting to Cube Orange on {serial_port}...")
+    vehicle = connect(serial_port, baud=baud, wait_ready=True)
+    print(f"Connected. Vehicle mode: {vehicle.mode.name}, Armed: {vehicle.armed}")
+
+    # Initialize mode handler
+    last_mode = vehicle.mode.name
+    print(f"Current flight mode: {last_mode}")
+
+    # Add mode change callback
+    @vehicle.on_attribute('mode')
+    def mode_callback(self, attr_name, value):
+        nonlocal last_mode
+        if last_mode != value.name:
+            print(f"Flight mode changed from {last_mode} to {value.name}")
+            if value.name == 'GUIDED_NOGPS':
+                print("Entering autonomous control mode")
+            elif hasattr(process_detection_with_control, 'last_thrust'):
+                # Maintain current altitude during mode transition
+                maintain_altitude(vehicle, process_detection_with_control.last_thrust)
+            last_mode = value.name
+
+    print("Ready for flight mode control (STABILIZE/ALT_HOLD/GUIDED_NOGPS)")
+
+    # Define frame callback that processes detections with attitude control
+    def frame_callback(frame, det, names, frame_w, frame_h):
+        """
+        Callback invoked by yolo_run for each frame with detection data.
+        """
+        if len(det) > 0:
+            # Process detections with attitude control
+            process_detection_with_control(frame, det, names, frame_w, frame_h, vehicle)
+        else:
+            # Hover when no target detected
+            print("No target detected. Hovering...")
+            send_attitude_target(vehicle, 0, 0, 0, 0.5)  # Hover at 50% thrust
+
+        # Check for 'q' key to initiate safe shutdown
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            print("\nSafe shutdown initiated by user ('q' pressed)...")
+            
+            # First set all controls to neutral/zero
+            print("Setting controls to neutral...")
+            send_attitude_target(vehicle, roll=0, pitch=0, yaw_rate=0, thrust=HOVER_THRUST)
+            time.sleep(0.5)  # Wait for controls to take effect
+            
+            # Then disarm
+            print("Disarming vehicle...")
+            vehicle.armed = False
+            
+            # Wait for confirmation that we're disarmed
+            timeout = time.time() + 5  # 5 second timeout
+            while vehicle.armed and time.time() < timeout:
+                print("Waiting for disarm...")
+                time.sleep(0.5)
+                
+            if vehicle.armed:
+                print("WARNING: Vehicle may still be armed!")
+            else:
+                print("Vehicle successfully disarmed")
+                
+            # Close the connection
+            vehicle.close()
+            print("Vehicle connection closed")
+            return False  # Stop processing
+        
+        return True  # Continue processing
+    
+    try:
+        # Call the YOLO detection function from detect_test_jetty
+        yolo_run(
+            weights=weights,
+            source=source,
+            imgsz=imgsz,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            max_det=max_det,
+            device=device,
+            nosave=True,
+            view_img=False,
+            frame_callback=frame_callback,
+            draw=True,
+            **kwargs
+        )
+    except KeyboardInterrupt:
+        print("\nStopping...")
+    finally:
+        # Disarm and close vehicle connection
+        print("Disarming vehicle...")
+        vehicle.armed = False
+        time.sleep(1)
+        vehicle.close()
+        print("Vehicle connection closed")
+
+
+def parse_opt():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--weights', nargs='+', type=str, default='yolov5s.pt', help='model.pt path(s)')
+    parser.add_argument('--source', type=str, default='data/images', help='file/dir/URL/glob, 0 for webcam')
+    parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='inference size (pixels)')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.45, help='NMS IoU threshold')
+    parser.add_argument('--max-det', type=int, default=1000, help='maximum detections per image')
+    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--view-img', action='store_true', help='show results')
+    parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
+    parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
+    parser.add_argument('--save-crop', action='store_true', help='save cropped prediction boxes')
+    parser.add_argument('--nosave', action='store_true', help='do not save images/videos')
+    parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --class 0, or --class 0 2 3')
+    parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
+    parser.add_argument('--augment', action='store_true', help='augmented inference')
+    parser.add_argument('--update', action='store_true', help='update all models')
+    parser.add_argument('--project', default='runs/detect', help='save results to project/name')
+    parser.add_argument('--name', default='exp', help='save results to project/name')
+    parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
+    parser.add_argument('--line-thickness', default=3, type=int, help='bounding box thickness (pixels)')
+    parser.add_argument('--hide-labels', default=False, action='store_true', help='hide labels')
+    parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
+    parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
+    parser.add_argument('--serial-port', default='/dev/ttyACM0', help='Cube Orange serial port')
+    parser.add_argument('--baud', type=int, default=57600, help='Serial baud rate')
+    opt = parser.parse_args()
+    return opt
+
+
+def main(opt):
+    run_with_attitude_control(**vars(opt))
+
+
+if __name__ == "__main__":
+    opt = parse_opt()
+    main(opt)

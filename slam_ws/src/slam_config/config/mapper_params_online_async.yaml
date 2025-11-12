@@ -14,12 +14,14 @@ slam_toolbox:
     # Debugging
     debug_logging: false
     throttle_scans: 1
+    use_odometry: false
     
     # Transform parameters
     transform_publish_period: 0.02  # 50 Hz for smooth TF publishing
     tf_buffer_duration: 30.0
-    transform_timeout: 0.2
+    transform_timeout: 0.5
     map_update_interval: 2.0  # Update map every 2 seconds
+    provide_odom_frame: true   # Explicitly provide map->odom; no external odom required
     
     # Solver parameters - Optimized for Jetson CPU
     solver_plugin: solver_plugins::CeresSolver
@@ -31,10 +33,11 @@ slam_toolbox:
     
     # Scan matcher parameters
     use_scan_matching: true
+    # Lidar-only mapping: do not require TF odom->base_link
+    use_tf_scan_transformation: false
     use_scan_barycenter: true
-    minimum_travel_distance: 0.005  # meters - Very low for handheld testing
-    minimum_travel_heading: 0.005   # radians - Very low for handheld testing  
-    minimum_time_interval: 0.5      # Force update every 0.5 seconds regardless of movement
+    minimum_travel_distance: 0.01  # meters - LOWERED for stationary testing
+    minimum_travel_heading: 0.01   # radians - LOWERED for stationary testing
     scan_buffer_size: 10
     scan_buffer_maximum_scan_distance: 10.0
     link_match_minimum_response_fine: 0.1  
@@ -68,9 +71,10 @@ slam_toolbox:
     use_response_expansion: true
     
     # Performance tuning for Jetson
-    # Laser range limits tuned for TiM561 (messages earlier showed 0.1m..10.0m)
+    # Match TIM561 capabilities (range_min=0.1m, range_max=10.0m)
     min_laser_range: 0.1
     max_laser_range: 10.0
+    minimum_time_interval: 0.1  # Process scans at max 10 Hz
     
     # Map quality parameters
     resolution: 0.05  # 5cm resolution

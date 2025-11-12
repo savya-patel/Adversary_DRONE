@@ -1,0 +1,18 @@
+⚠️ IMPORTANT - DO NOT USE THIS LAUNCH FILE ⚠️
+
+This launch file starts slam_toolbox which has known issues on ROS 2 Humble:
+- TF message filter deadlock (drops ALL scans)
+- "queue is full" errors
+- Incompatible with high-frequency LiDAR (20 Hz)
+
+✅ USE CARTOGRAPHER INSTEAD:
+  cd ~/Adversary_DRONE/slam_ws
+  ./run_cartographer.sh          # Standard launch
+  ./run_cartographer_log.sh      # With logging
+
+If you accidentally started this file and slam_toolbox is running:
+  cd ~/Adversary_DRONE/slam_ws
+  ./kill_all_slam.sh             # Kill everything
+  ./run_cartographer.sh          # Start Cartographer
+
+See: CARTOGRAPHER_GUIDE.md for full documentation

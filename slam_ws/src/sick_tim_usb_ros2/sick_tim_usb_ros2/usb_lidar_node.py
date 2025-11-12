@@ -17,11 +17,13 @@ class SimpleLidarPublisher(Node):
         self.declare_parameter('topic', '/scan')
         self.declare_parameter('range_min', 0.1)
         self.declare_parameter('range_max', 10.0)
+        self.declare_parameter('log_throttle_sec', 2.0)
 
         self.frame_id = self.get_parameter('frame_id').get_parameter_value().string_value
         self.topic = self.get_parameter('topic').get_parameter_value().string_value
         self.range_min = self.get_parameter('range_min').value
         self.range_max = self.get_parameter('range_max').value
+        self.log_throttle_sec = float(self.get_parameter('log_throttle_sec').value)
 
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -65,8 +67,11 @@ class SimpleLidarPublisher(Node):
         angle_increment = (angle_max - angle_min) / (num_points - 1) if num_points > 1 else 0.0
         
         # Log every publish for debug
+        subs = self.publisher.get_subscription_count()
+        # Provide a message (first positional argument) and keep throttle_duration_sec as a kwarg
         self.get_logger().info(
-            f'Publishing scan: {num_points} points, {math.degrees(angle_increment):.3f}° increment'
+            f'Publishing scan: {num_points} points, {math.degrees(angle_increment):.3f}° increment | subs={subs}',
+            throttle_duration_sec=self.log_throttle_sec
         )
 
         msg = LaserScan()
@@ -394,9 +399,10 @@ class UsbTimPublisher(Node):
         angle_max_rad = 135.0 * math.pi / 180.0
         angular_increment_rad = (angle_max_rad - angle_min_rad) / (num_points - 1) if num_points > 1 else 0.0
         
+        subs = self.publisher.get_subscription_count()
         self.get_logger().info(
             f'Publishing scan: {num_points} points, 270.0° span, '
-            f'{math.degrees(angular_increment_rad):.3f}° increment', 
+            f'{math.degrees(angular_increment_rad):.3f}° increment | subs={subs}',
             throttle_duration_sec=2.0
         )
         
