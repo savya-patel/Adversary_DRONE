@@ -3,7 +3,18 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-yolo4/
 .git_corrupt/
+
+# Heavy model weights and inference outputs
 Detect_Drone/runs/
 Detect_Drone/runs/detect/
+yolov4tiny/*.weights
+yolov4tiny/yolov4-tiny-custom_*.weights
+
+# Build artifacts and ROS 2
+slam/build/
+slam/install/
+slam/log/
+slam_ws/build/
+slam_ws/install/
+slam_ws/log/

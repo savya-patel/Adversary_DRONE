@@ -1,17 +1,14 @@
 """
 L1_lidar_usb.py - USB (serial/CDC-ACM) version of L1_lidar.py for SICK TiM561 LiDAR
-Author: Boo Man & GPT-5
+Author: Savya Patel
 
 Usage:
 ------
 sudo python3 L1_lidar_usb.py
 
-This script mirrors L1_lidar.py but talks SOPAS over the LiDAR's USB virtual
+This script uses SOPAS over the LiDAR's USB and not ethernet interface, code for ethernet is also available in github repo: sick_scan_xd
 serial port (/dev/ttyACM* or /dev/ttyUSB*). It uses the recommended sequence
 for TiM5xx: login -> start measurement -> run -> enable LMDscandata.
-
-Why this change? Your unit enumerates as a serial device; using raw libusb
-bulk endpoints prevented streaming and put the device in an error state (LED red).
 """
 
 import glob

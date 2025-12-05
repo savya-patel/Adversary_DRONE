@@ -14,8 +14,8 @@ setup(
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='Eagle',
-    maintainer_email='eagle@example.com',
-    description='Publish LaserScan from SICK TiM561 via USB for slam_toolbox',
+    maintainer_email='savyapatel@gmail.com',
+    description='Publish LaserScan from SICK TiM561 via USB for slam',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={

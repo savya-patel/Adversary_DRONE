@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>sick_tim_usb_ros2</name>
+  <version>0.1.0</version>
+  <description>ROS 2 publisher that reads SICK TiM561 over USB (serial or USB bulk) and publishes sensor_msgs/LaserScan.</description>
+  <maintainer email="savyapatel@gmail.com">Eagle</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <!-- Prefer OS packages; serial is required, usb is optional for bulk fallback -->
+  <exec_depend>python3-serial</exec_depend>
+  <exec_depend>python3-usb</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

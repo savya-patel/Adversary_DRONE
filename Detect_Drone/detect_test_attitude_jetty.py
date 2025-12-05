@@ -5,14 +5,14 @@ This script runs YOLOv5 on Jetson with CUDA, detects the target drone,
 computes bounding box errors, and sends attitude commands to Cube Orange
 to center the target in the frame.
 
+This version is used when maximum thrust is 20% to ensure safe testing hover range.
+In Mission Planner, set the following parameter:
+    MAX_THRUST = 0.2
+
 Usage:
     Activate virtual environment first:
     $ cd Adversary_DRONE/
     $ source venv/bin/activate
-    
-    Run on Jetson:
-    $ cd Detect_Drone/
-    $ python detect_test_attitude_jetty.py --weights best.pt --source 0 --max-det 1 --imgsz 320 --nosave --device 0
     
 Flow:
     1. YOLO detects target drone on Jetson GPU -> gets bounding box center (x_center, y_center)
@@ -143,10 +143,10 @@ def process_detection_with_control(im0, det, names, frame_w, frame_h, vehicle):
         desired_size = frame_h / 6
         err_z = bbox_h - desired_size
 
-        # Tunable gains (reduced further for 15-20% thrust range)
-        Kp_pitch = 0.0003   # forward/backward (reduced by 40%)
-        Kp_thrust = 0.001  # up/down (reduced by 66% for smaller thrust adjustments)
-        Kp_yaw = 0.0003     # yaw rate (reduced by 40%)
+        # Tunable gains (reduced for 15-20% thrust range)
+        Kp_pitch = 0.0003  # forward/backward
+        Kp_thrust = 0.001  # up/down
+        Kp_yaw = 0.0003    # yaw rate 
         
         # Increased deadband to prevent small movements with lower thrust
         deadband_x = 20  # pixels (increased to reduce small yaw corrections)

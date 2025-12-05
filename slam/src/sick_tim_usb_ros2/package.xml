@@ -2,8 +2,8 @@
 <package format="3">
   <name>sick_tim_usb_ros2</name>
   <version>0.1.0</version>
-  <description>ROS 2 publisher that reads SICK TiM561 over USB (serial or USB bulk) and publishes sensor_msgs/LaserScan for slam_toolbox.</description>
-  <maintainer email="eagle@example.com">Eagle</maintainer>
+  <description>ROS 2 publisher that reads SICK TiM561 over USB (serial or USB bulk) and publishes sensor_msgs/LaserScan.</description>
+  <maintainer email="savyapatel@gmail.com">Eagle</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

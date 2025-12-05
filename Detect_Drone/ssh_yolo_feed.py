@@ -23,8 +23,8 @@ python3 /home/eagle/Adversary_DRONE/Detect_Drone/ssh_yolo_feed.py --server --hos
 ON JETSON NANO (SERVER SIDE - with Attitude Control):
 sudo /home/eagle/venv/bin/python3 /home/eagle/Adversary_DRONE/Detect_Drone/ssh_yolo_feed.py --server --host 0.0.0.0 --port 5000 --device 0 --quality 60 --weights /home/eagle/Adversary_DRONE/Detect_Drone/best.pt --attitude-control --serial /dev/ttyACM0 --baud 57600
 
-ON LOCAL MACHINE (CLIENT SIDE - replace 10.250.240.81 with Jetson's IP):
-python3 ssh_yolo_feed.py --client --host 10.250.240.81 --port 5000
+ON LOCAL MACHINE (CLIENT SIDE - replace 10.251.75.235 with Jetson's IP):
+python3 ssh_yolo_feed.py --client --host 10.251.75.235 --port 5000
 """
 """
 If you have Cd into Detect_Drone and need a new tunnnel
@@ -35,6 +35,7 @@ python3 ssh_yolo_feed.py --server --host 0.0.0.0 --port 5000 --device 0 --qualit
 ssh -L 5000:localhost:5000 eagle@10.250.240.81 
 python3 ssh_yolo_feed.py --client --host 127.0.0.1 --port 5000 (seperate terminal)
 """
+
 DEFAULT_PORT = 5000
 HEADER_FMT = "!I"  # 4-byte length header
 

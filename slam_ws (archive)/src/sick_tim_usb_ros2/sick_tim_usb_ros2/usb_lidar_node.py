@@ -57,6 +57,11 @@ class SimpleLidarPublisher(Node):
             return
 
         ranges = self.latest_scan
+        # If device is at 0.333° (~811 pts), optionally downsample to ~1.0° (270 pts)
+        target_points = 270
+        if len(ranges) > target_points + 10:  # heuristic: treat >280 as high-res
+            idx = np.linspace(0, len(ranges) - 1, target_points)
+            ranges = np.interp(idx, np.arange(len(ranges)), ranges)
         num_points = len(ranges)
 
         # Mirror left/right to match GUI/web if needed
@@ -68,7 +73,6 @@ class SimpleLidarPublisher(Node):
         
         # Log every publish for debug
         subs = self.publisher.get_subscription_count()
-        # Provide a message (first positional argument) and keep throttle_duration_sec as a kwarg
         self.get_logger().info(
             f'Publishing scan: {num_points} points, {math.degrees(angle_increment):.3f}° increment | subs={subs}',
             throttle_duration_sec=self.log_throttle_sec

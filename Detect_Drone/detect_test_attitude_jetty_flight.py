@@ -11,11 +11,7 @@ Usage:
     Activate virtual environment first:
     $ cd Adversary_DRONE/
     $ source venv/bin/activate
-    
-    Run on Jetson:
-    $ cd Detect_Drone/
-    $ python detect_test_attitude_jetty_flight.py --weights best.pt --source 0 --max-det 1 --imgsz 320 --nosave --device 0
-    
+
 Flow:
     1. YOLO detects target drone on Jetson GPU -> gets bounding box center (x_center, y_center)
     2. Computes error (err_x, err_y, err_z) relative to frame center
