@@ -1,5 +1,7 @@
 ADVERSARY TRACKING DRONE
 
+Authors: Savya Patel and Maika Pamatmat
+
 Project: Capstone under ETID and GCRI (Cyber Research Institute) at Texas A&M.
 
 System: Runs on NVIDIA Jetson companion computer to send attitude commands to flight computer using:
