@@ -62,6 +62,10 @@ Contents:
   models/                    YOLOv5 architecture definitions
   data/                      Dataset configs (drone.yaml, etc.)
 
+  Note: the ssh yolo feeds were made by Eagle Eye, and the best.pt pretrained weight comes from 
+  the Github Repo tusharsarkar3/Detect_Drone. The utils/, models/, and data/ files also came from 
+  the tusharsarkar3/Detect_Drone repo.
+
 Key Features:
   - Attitude control: Reads /dev/ttyACM0 (Cube Orange autopilot) and sends attitude targets
   - SSH tunnel: Streams video to ground station for real-time monitoring
