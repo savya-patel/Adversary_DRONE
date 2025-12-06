@@ -9,6 +9,9 @@ System: Runs on NVIDIA Jetson companion computer to send attitude commands to fl
 - Obstacle detection: SICK TiM561 2D LiDAR and ToF sensors
 - SLAM: Google Cartographer for real-time 2D mapping
 
+FOR A FRESH JETSON YOU WILL HAVE TO DOWNLOAD CUDA PACKAGES TO RUN YOLO ON GPU AND NOT CPU (LIKE PYTORCH, TORCH)
+YOU WILL NOT GET HIGH FPS ON CPU YOU NEED TO USE CUDA GPU
+
 ================================================================================
 FOLDER INVENTORY
 ================================================================================
